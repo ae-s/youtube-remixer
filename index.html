@@ -2,10 +2,8 @@
   <head>
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-	<link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.11.4/themes/smoothness/jquery-ui.css"/>
 	<!-- jQuery (necessary for Bootstrap's JavaScript plugins) -->
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
-	<script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.11.4/jquery-ui.min.js"></script>
 
     <!-- Include all compiled plugins (below), or include individual files as needed -->
     <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js"></script>
@@ -30,14 +28,15 @@ function onlyUnique(value, index, self) {
 // - s is a start time in decimal seconds
 // - e is an end time in decimal seconds
 function frag_make(cutlist) {
-	var vid_list = cutlist.map(function(x) {return x.id}).filter(onlyUnique);
+	var vid_list = cutlist.map(function(x) {return x.id}).concat([video_id]).filter(onlyUnique);
 	var cuts = cutlist.map(function(x) {
 		return {id: vid_list.indexOf(x.id),
 				start: x.start,
 				end: x.end}});
 
 	var frag = vid_list.join(",") + ":" +
-		cuts.map(function(x) { return [x.id, x.start, x.end].join("-") }).join(",");
+		cuts.map(function(x) { return [x.id, x.start, x.end].join("-") }).join(",") + ":" +
+		($("#repeat-p")[0].checked ? "r" : "");
 
 	return frag;
 }
@@ -45,9 +44,12 @@ function frag_make(cutlist) {
 // read a URL fragment string and turn it into a cutlist
 function frag_parse(frag) {
 	var vc
-	vc = frag.split(":");
+	vc = (frag + "::").split(":");
 	var vids = vc[0].split(",");
 	var cuts = vc[1].split(",");
+
+	var flags = vc[2].split("");
+	$("#repeat-p")[0].checked = (flags.indexOf("r") != -1);
 
 	var cutlist = cuts.map(function(x) { ise = x.split("-");
 										 return {id:vids[+ise[0]], start:+ise[1], end:+ise[2]}; })
@@ -73,16 +75,18 @@ function frag_parse(frag) {
 	</div>
 
 	<div class="col-md-3">
-	  <div>
-		<button id="play-button" onclick="play_from_cutlist();">play this cut ></button><br/>
-		<hr/>
-		<button id="go-button" onclick="b_grab();">Cut here!</button>
-		<button id="add-button" onclick="cutlist_append_empty();">add a blank cut</button>
-		<button id="share-button" onclick="b_share();">save to url</button><br/>
-	  </div>
+	  <button id="play-button" onclick="play_from_cutlist();">play this cut &gt;</button>
+	  <hr/>
+	  <button id="go-button" onclick="b_grab();">cut here!</button>
+	  <button id="add-button" onclick="cutlist_append_empty();">add a blank cut</button>
+	  <button id="share-button" onclick="b_share();">save to url</button>
+	  <label><input type="checkbox" id="repeat-p"> repeat</label>
+
+	  <hr/>
 	  <table class="table" id="cutlist">
+		<caption>Cut list (seconds)</caption>
 		<thead>
-		  <tr><th>start</th><th>end</th></tr>
+		  <tr><th>from</th><th>to</th></tr>
 		</thead>
 		<tbody></tbody>
 	  </table>
@@ -121,7 +125,6 @@ function load_video() {
         width: '640',
         events: {
             'onReady': onPlayerReady,
-            'onStateChange': onPlayerStateChange
         }
     });
 }
@@ -129,17 +132,11 @@ function load_video() {
 
 // 4. The API will call this function when the video player is ready.
 function onPlayerReady(event) {
-	player.loadVideoById(video_id);
+	player.cueVideoById(video_id);
 }
 
 // 5. The API calls this function when the player's state changes.
-//    The function indicates that when playing a video (state=1),
-//    the player should play for six seconds and then stop.
-var done = false;
 function onPlayerStateChange(event) {
-}
-
-function cutlist_cleanup() {
 }
 
 function cutlist_append_empty() {
@@ -175,7 +172,7 @@ function b_grab() {
 	return;
 }
 
-function b_share() {
+function cutlist_make() {
 	var cutlist = $("#cutlist tr").get()
 		.filter(function(x) { return $(x).find("input").size() != 0 })
 		.map(function(x) {
@@ -187,12 +184,44 @@ function b_share() {
 		})
 		.filter(function(x) { return x.start != x.end; })
 
+	return cutlist;
+}
+
+function b_share() {
+	var cutlist = cutlist_make();
 	var frag = frag_make(cutlist);
 	history.pushState(null, "Video recut", "#" + frag);
 }
 
+var pending_cutlist = [];
 function play_from_cutlist() {
-	
+	player.pauseVideo();
+	pending_cutlist = cutlist_make();
+	player.seekTo(0, false);
+	player.seekTo(pending_cutlist[0].start, true);
+	player.playVideo();
+	playtime_check(0);
+}
+
+function playtime_check(t_now) {
+	if (player.getCurrentTime() >= pending_cutlist[0].end) {
+		// time to change time
+		pending_cutlist.shift();
+
+		if (pending_cutlist.length == 0) {
+			if ($("#repeat-p")[0].checked) {
+				// again again
+				pending_cutlist = cutlist_make();
+			} else {
+				// done playing
+				player.pauseVideo();
+				return;
+			}
+		}
+		player.seekTo(pending_cutlist[0].start, true);
+	}
+	// wait for a bit and check the time
+	window.requestAnimationFrame(playtime_check);
 }
 
 function load_cutlist_from_url() {
